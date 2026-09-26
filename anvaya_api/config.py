@@ -17,7 +17,7 @@ class Settings:
     username: str = ""
     password: str = ""
     project_id: str = "anvaya"
-    primary_model: str = "qwen2.5:7b"
+    primary_model: str = "llama3.1:8b"
     data_dir: Path = Path("/data")
     request_timeout_s: float = 240.0  # a cold local-model load can take minutes (docs/anvaya/LOCAL-LLM.md)
 

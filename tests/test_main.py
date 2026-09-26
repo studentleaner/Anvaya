@@ -27,7 +27,7 @@ def test_status_ok():
     body = client_for(Settings(username="a", password="b"), gateway).get("/api/status").json()
     assert body["gateway"] == "up" and body["auth"] == "ok"
     assert body["local_only"] is True and body["provider"] == "ollama"
-    assert body["model"] == {"name": "qwen2.5:7b", "state": "unknown"} and body["plugins"] == []
+    assert body["model"] == {"name": "llama3.1:8b", "state": "unknown"} and body["plugins"] == []
 
 
 def test_status_not_configured():

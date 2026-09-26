@@ -6,7 +6,7 @@ from anvaya_api.config import LOCAL_PROVIDER, Settings
 def test_defaults_are_local_and_safe():
     s = Settings.from_env({})
     assert s.gateway_url == "http://abstractai-gateway:8000"
-    assert s.project_id == "anvaya" and s.primary_model == "qwen2.5:7b"
+    assert s.project_id == "anvaya" and s.primary_model == "llama3.1:8b"
     assert s.data_dir == Path("/data") and s.request_timeout_s == 240.0
     assert not s.has_credentials
     assert LOCAL_PROVIDER == "ollama"
