@@ -1,0 +1,24 @@
+# secrets / runtime data - NEVER commit
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+var/
+data/
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+# editors / os
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
