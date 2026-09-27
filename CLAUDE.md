@@ -1,6 +1,8 @@
-# Anvaya - instructions for any coding agent
+# Anvaya — Project Intelligence for Claude
 
-Same project as `CLAUDE.md`, tool-neutral wording. The `## Rules` section below is byte-identical to `CLAUDE.md`'s - edit both in the same commit (`Test-ProjectBaseline.ps1` checks).
+Ask Home: one connected intelligence layer across every Home app - a drawer, mounted in place on the app's own pages, backed by shared Home Knowledge and per-app plugins, answering only through AbstractAI's local models.
+
+This is the entry point for all AI-assisted work in this repo. `AGENTS.md` carries the same rules for other agents - **edit both in the same commit**; the `## Rules` sections must stay byte-identical (`Test-ProjectBaseline.ps1` checks).
 
 ## Reading order (cold start)
 
@@ -32,10 +34,17 @@ Same project as `CLAUDE.md`, tool-neutral wording. The `## Rules` section below 
 13. **The Kids profile never gets Ask Home** - refused at both the widget (never mounts) and the API (`403`).
 14. **100% branch coverage** on every `anvaya_api` module before it merges (`python -X utf8 -m pytest --cov --cov-branch`).
 
-## Push
+## Project specifics
 
-Branch `main`; push as `studentleaner` through Git Credential Manager:
-```bash
-git -c credential.helper= -c credential.helper=manager push
+- Slug: `anvaya` · Stack: Python 3.12 / FastAPI / httpx, vanilla-JS widget (`documentation/js/homechat.js` in HomeLab) · Owner: Pradeep
+- Deployed as container `anvaya-api` in the HomeLab compose stack (`compose/infrastructure/compose.yml`), behind the HomeLab docs login, no host port.
+- No Kanboard/Wiki.js SDLC provisioning yet - tracked directly in this repo's `docs/DELIVERY_BACKLOG.md`.
+
+## Verify
+
+```text
+build:  pip install -r requirements.txt
+test:   python -X utf8 -m pytest --cov --cov-branch   # must stay at 100%
+run:    ANVAYA_ABSTRACTAI_URL=http://192.168.0.113:8001 python -m uvicorn anvaya_api.main:app --port 8300
+live:   curl -u serviceaccount:*** http://192.168.0.113:8099/anvaya-api/status
 ```
-Never commit `.env`, data, or anything from the HomeLab `compose/.env`.
