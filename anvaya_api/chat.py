@@ -70,7 +70,7 @@ async def chat_events(req: ChatRequest, ai: AbstractAIClient, s: Settings, elaps
     conversation_id = req.conversation_id or new_id("conv")
     message_id = new_id("msg")
     yield sse("status", {"stage": "routing", "model_state": wire_state(ms)})
-    result = await retrieve(ai, req.message, scope=req.scope, profile=req.profile)
+    result = await retrieve(ai, req.message, scope=req.scope, profile=req.profile, settings=s)
     yield sse("context", {"scope": req.scope, "plugins": result.plugins, "redacted": result.redacted,
                           "mode": "knowledge"})
     yield sse("status", {"stage": "model_loading" if ms.state == "warming" else "generating",

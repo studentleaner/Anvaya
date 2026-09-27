@@ -16,6 +16,7 @@ from typing import Optional, Sequence
 
 from .abstractai import AbstractAIClient
 from .chat_prompt import build_system_prompt
+from .config import Settings
 from .retrieval import RetrievalResult, fallback_answer, has_valid_citation, retrieve
 
 log = logging.getLogger("anvaya.answer")
@@ -78,10 +79,11 @@ async def generate_from_result(ai: AbstractAIClient, message: str, result: Retri
 
 
 async def generate_grounded_answer(ai: AbstractAIClient, message: str, *, scope: str, profile: str, model: str,
-                                   base_system_prompt: str, session_id: str = "",
-                                   history: Sequence[str] = ()) -> Answer:
+                                   base_system_prompt: str, settings: Optional[Settings] = None,
+                                   session_id: str = "", history: Sequence[str] = ()) -> Answer:
     """Convenience wrapper for callers (e.g. /api/ask) that don't need the intermediate RetrievalResult for
-    anything of their own - retrieves, then delegates to generate_from_result."""
-    result = await retrieve(ai, message, scope=scope, profile=profile)
+    anything of their own - retrieves, then delegates to generate_from_result. `settings`, when given, also
+    pulls in live_facts.py's query-time facts (solar/bills/media-pipeline) alongside the static doc search."""
+    result = await retrieve(ai, message, scope=scope, profile=profile, settings=settings)
     return await generate_from_result(ai, message, result, model=model, base_system_prompt=base_system_prompt,
                                       session_id=session_id, history=history)

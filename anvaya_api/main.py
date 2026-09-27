@@ -103,7 +103,8 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
         """One request, one citation-enforced answer - for channel adapters (Telegram/WhatsApp/voice) that can't
         consume an SSE stream. See documentation/anvaya/CHANNELS.md (HomeLab) for how each channel calls this."""
         answer = await generate_grounded_answer(ai, req.message, scope=req.scope, profile=req.profile,
-                                                model=s.primary_model, base_system_prompt=await prompts.get())
+                                                model=s.primary_model, base_system_prompt=await prompts.get(),
+                                                settings=s)
         if answer.error:
             raise HTTPException(status_code=502, detail=answer.error.get("message") or answer.error["code"])
         return AskResponse(answer=answer.text, sources=answer.result.as_sources_event(),

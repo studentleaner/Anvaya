@@ -6,9 +6,10 @@ reads whatever was ingested by ingest.py, filtered by the classes each profile i
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
 from .abstractai import AbstractAIClient
+from .config import Settings
 
 MAX_SNIPPET_CHARS = 400
 MAX_SOURCES = 4
@@ -57,16 +58,28 @@ def allowed_classes(scope: str, profile: Literal["family", "system"]) -> set[str
     return _SCOPE_CLASSES.get(scope, {"public"}) & _PROFILE_CLASSES.get(profile, {"public"})
 
 
-async def retrieve(ai: AbstractAIClient, query: str, *, scope: str, profile: str, top_k: int = MAX_SOURCES) -> RetrievalResult:
+async def retrieve(ai: AbstractAIClient, query: str, *, scope: str, profile: str, top_k: int = MAX_SOURCES,
+                    settings: Optional[Settings] = None, live_transport=None) -> RetrievalResult:
     classes = allowed_classes(scope, profile)
+    result = RetrievalResult()
+    plugins: set[str] = set()
+    if settings is not None:
+        # Live facts (solar/bills/media-pipeline - live_facts.py) answer "what's true right now" questions
+        # that a 6-hourly-reindexed doc snapshot would get wrong; they take priority slots over doc hits.
+        # live_transport is test-only (httpx.MockTransport) - production always uses a real connection.
+        from .live_facts import live_sources  # local import: breaks the retrieval<->live_facts circular import
+        for fact in await live_sources(query, settings, classes, transport=live_transport):
+            plugins.add(fact.plugin)
+            result.sources.append(Source(id=f"{fact.plugin}", plugin=fact.plugin, title=fact.title,
+                                         uri=fact.uri, snippet=fact.text[:MAX_SNIPPET_CHARS], text=fact.text))
     # /v1/knowledge/search returns {doc_id, text, score} - no metadata (chunks aren't tied to their document's
     # metadata in the gateway's search response). Join against /v1/knowledge/documents by doc_id instead of
     # changing AbstractAI's response schema for this.
     hits, docs = await ai.search(query, top_k=top_k * 3), await ai.list_documents()  # over-fetch, filter by class below
     meta_by_doc_id = {d["doc_id"]: (d.get("metadata") or {}) for d in docs}
-    result = RetrievalResult()
-    plugins: set[str] = set()
     for h in hits:
+        if len(result.sources) >= top_k:  # live facts (above) can already fill or exceed top_k on their own
+            break
         meta = meta_by_doc_id.get(h.get("doc_id", ""), {})
         klass = meta.get("class", "public")
         if klass not in classes:
@@ -82,8 +95,6 @@ async def retrieve(ai: AbstractAIClient, query: str, *, scope: str, profile: str
             snippet=text[:MAX_SNIPPET_CHARS],
             text=text,
         ))
-        if len(result.sources) >= top_k:
-            break
     result.plugins = sorted(plugins)
     return result
 

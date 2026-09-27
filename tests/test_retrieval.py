@@ -103,6 +103,27 @@ def test_has_valid_citation():
     assert has_valid_citation("made up fact", Empty()) is True
 
 
+def test_retrieve_merges_live_facts_ahead_of_doc_hits_and_respects_top_k():
+    hits = [{"doc_id": str(i), "text": f"T{i}"} for i in range(3)]
+    docs = [doc(str(i), plugin="homelab.docs", **{"class": "public"}) for i in range(3)]
+
+    def live_handler(request):
+        return httpx.Response(200, json={"state": "5", "attributes": {"unit_of_measurement": "kWh"}})
+
+    live_settings = Settings(username="a", password="b", ha_url="http://homeassistant:8123", ha_token="tok")
+    result = run(retrieve(make(gw(hits, docs)), "how much solar today", scope="my_home", profile="system",
+                          top_k=2, settings=live_settings, live_transport=httpx.MockTransport(live_handler)))
+    assert result.sources[0].plugin == "live.solar"
+    assert len(result.sources) == 2  # top_k=2: 1 live fact + only 1 doc hit, not all 3
+
+
+def test_retrieve_without_settings_never_calls_live_facts():
+    hits = [{"doc_id": "a", "text": "t"}]
+    docs = [doc("a", plugin="homelab.docs", **{"class": "public"})]
+    result = run(retrieve(make(gw(hits, docs)), "how much solar today", scope="this_app", profile="system"))
+    assert all(s.plugin != "live.solar" for s in result.sources)
+
+
 def test_fallback_answer():
     from anvaya_api.retrieval import NO_MATCH_REPLY, Source, fallback_answer
 
