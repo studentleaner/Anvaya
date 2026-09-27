@@ -98,5 +98,20 @@ def test_has_valid_citation():
 
     class Empty:
         sources = []
+    # Nothing to cite -> any answer is accepted (general-knowledge questions are allowed unsourced, see chat_prompt.py)
     assert has_valid_citation("I couldn't find that in your home data.", Empty()) is True
-    assert has_valid_citation("made up fact", Empty()) is False
+    assert has_valid_citation("made up fact", Empty()) is True
+
+
+def test_fallback_answer():
+    from anvaya_api.retrieval import NO_MATCH_REPLY, Source, fallback_answer
+
+    class Empty:
+        sources = []
+    assert fallback_answer(Empty()) == NO_MATCH_REPLY
+
+    class WithSources:
+        sources = [Source("id1", "homelab.docs", "solar.md", "/solar.md", "snip", "text"),
+                  Source("id2", "homelab.docs", "known-issues.md", "/known-issues.md", "snip2", "text2")]
+    msg = fallback_answer(WithSources())
+    assert "solar.md" in msg and "known-issues.md" in msg and "properly cited" in msg

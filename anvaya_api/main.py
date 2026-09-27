@@ -5,17 +5,37 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .abstractai import AbstractAIClient
+from .answer import generate_grounded_answer
 from .bootstrap import ModelState, PromptCache, bootstrap
-from .chat import SYSTEM_PROMPT, ChatRequest, chat_events, wire_state
+from .chat import ChatRequest, chat_events, wire_state
+from .chat_prompt import SYSTEM_PROMPT
 from .config import LOCAL_PROVIDER, Settings
 from .ingest import IngestReport, reindex
+
+
+class AskRequest(BaseModel):
+    """Channel-agnostic Q&A - Telegram/WhatsApp/voice adapters call this instead of /api/chat's SSE stream.
+    `profile` deliberately excludes "kids" at the schema level: channel adapters are owner-only by construction
+    (allowlisted chat ids etc.), there is no path that should ever reach Ask Home as a kid."""
+    message: str = Field(min_length=1, max_length=4000)
+    scope: Literal["this_app", "current_page", "my_home", "all_apps"] = "my_home"
+    profile: Literal["family", "system"] = "system"
+
+
+class AskResponse(BaseModel):
+    answer: str
+    sources: list[dict]
+    model: str
+    local: bool
+    cited: bool
 
 
 def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIClient] = None,
@@ -77,6 +97,17 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/ask", response_model=AskResponse)
+    async def ask(req: AskRequest) -> AskResponse:
+        """One request, one citation-enforced answer - for channel adapters (Telegram/WhatsApp/voice) that can't
+        consume an SSE stream. See documentation/anvaya/CHANNELS.md (HomeLab) for how each channel calls this."""
+        answer = await generate_grounded_answer(ai, req.message, scope=req.scope, profile=req.profile,
+                                                model=s.primary_model, base_system_prompt=await prompts.get())
+        if answer.error:
+            raise HTTPException(status_code=502, detail=answer.error.get("message") or answer.error["code"])
+        return AskResponse(answer=answer.text, sources=answer.result.as_sources_event(),
+                           model=f"{LOCAL_PROVIDER}/{s.primary_model}", local=True, cited=answer.cited)
 
     @app.post("/api/admin/reindex")
     async def admin_reindex() -> dict:

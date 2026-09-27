@@ -91,11 +91,16 @@ def test_chat_streams_contract_events_in_order():
                                   "context": {"app": "portal", "page": "system"}})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     ev = events(r.text)
-    assert [e for e, _ in ev] == ["status", "context", "status", "token", "token", "sources", "done"]
+    # Citation enforcement (2026-09-27) buffers the whole answer before showing it, then reveals it word-by-word -
+    # the client still sees a token stream, it just isn't literally the model's own token boundaries any more.
+    kinds = [e for e, _ in ev]
+    assert kinds[:3] == ["status", "context", "status"] and kinds[-2:] == ["sources", "done"]
+    assert all(k == "token" for k in kinds[3:-2]) and len(kinds) > 5
     assert ev[1][1] == {"scope": "this_app", "plugins": [], "redacted": 0, "mode": "knowledge"}
     assert "".join(d["t"] for e, d in ev if e == "token") == "It converts DC to AC."
     done = ev[-1][1]
     assert done["local"] is True and done["model"] == "ollama/llama3.1:8b" and done["elapsed_ms"] >= 0
+    assert done["cited"] is True  # no sources retrieved -> any answer accepted (general knowledge allowed)
     assert re.fullmatch(r"conv_[0-9A-HJKMNP-TV-Z]{26}", done["conversation_id"])
     assert ev[-2] == ("sources", {"items": []})
 
@@ -264,8 +269,56 @@ def test_admin_reindex_endpoint_returns_a_report_and_status_reflects_it():
     assert c.get("/api/status").json()["last_reindex"]["scanned"] == body["scanned"]
 
 
+# ----------------------------------------------------------------- /api/ask
+def test_ask_returns_a_cited_answer():
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path == "/v1/knowledge/search":
+            return httpx.Response(200, json={"results": [{"doc_id": "a", "text": "The inverter is a Deye."}]})
+        if request.url.path == "/v1/knowledge/documents":
+            return httpx.Response(200, json={"documents": [{"doc_id": "a", "metadata": {"plugin": "homelab.docs", "class": "public", "path": "solar.md"}}]})
+        if request.url.path == "/v1/complete/stream":
+            return httpx.Response(200, content=b'data: {"token": "It is a Deye [src_1]."}\n\nevent: done\ndata: {"elapsed": 1}\n\n')
+        return httpx.Response(404)
+
+    c = client_for(Settings(username="a", password="b"), handler)
+    r = c.post("/api/ask", json={"message": "which inverter"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["answer"] == "It is a Deye [src_1]." and body["cited"] is True and body["local"] is True
+    assert body["model"] == "ollama/llama3.1:8b"
+    assert body["sources"] == [{"id": "src_1", "plugin": "homelab.docs", "title": "solar.md", "uri": "/solar.md",
+                               "snippet": "The inverter is a Deye."}]
+
+
+def test_ask_defaults_scope_and_profile():
+    c = client_for(Settings(username="a", password="b"), chat_gateway('event: done\ndata: {"elapsed": 1}\n\n'))
+    r = c.post("/api/ask", json={"message": "hello"})
+    assert r.status_code == 200 and r.json()["cited"] is True  # no sources -> accepted
+
+
+def test_ask_rejects_kids_profile_at_schema_level():
+    c = client_for(Settings(username="a", password="b"), chat_gateway(""))
+    r = c.post("/api/ask", json={"message": "hello", "profile": "kids"})
+    assert r.status_code == 422
+
+
+def test_ask_validation():
+    c = client_for(Settings(username="a", password="b"), chat_gateway(""))
+    assert c.post("/api/ask", json={"message": ""}).status_code == 422
+    assert c.post("/api/ask", json={"message": "x", "scope": "everything"}).status_code == 422
+
+
+def test_ask_gateway_error_becomes_502():
+    c = client_for(Settings(), chat_gateway(""))  # no credentials -> gateway_down
+    r = c.post("/api/ask", json={"message": "hello"})
+    assert r.status_code == 502
+    assert "AbstractAI" in r.json()["detail"]
+
+
 def test_build_system_prompt_with_and_without_sources():
-    from anvaya_api.chat import build_system_prompt
+    from anvaya_api.chat_prompt import build_system_prompt
     from anvaya_api.retrieval import RetrievalResult, Source
     empty = build_system_prompt("BASE", RetrievalResult())
     assert empty.startswith("BASE") and "No information about this home" in empty

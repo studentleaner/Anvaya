@@ -102,7 +102,19 @@ NO_MATCH_REPLY = "I couldn't find that in your home data."
 
 
 def has_valid_citation(answer: str, result: RetrievalResult) -> bool:
-    """A factual answer must cite at least one existing [src_n]; an empty-sources answer must say so instead."""
+    """Whether `answer` is safe to show as-is. When sources exist, at least one must actually be cited - a model
+    that had grounding material but ignored it is exactly the case worth catching. When there is nothing to cite,
+    ANY answer is accepted: the system prompt explicitly allows unsourced general-knowledge answers in that case
+    (see chat.py WITHOUT_SOURCES_SUFFIX) - there is nothing to enforce."""
     if not result.sources:
-        return NO_MATCH_REPLY.lower() in answer.lower()
+        return True
     return any(f"[src_{i + 1}]" in answer for i in range(len(result.sources)))
+
+
+def fallback_answer(result: RetrievalResult) -> str:
+    """Deterministic, un-hallucinated answer used when the model twice fails to cite its sources (chat.py's
+    enforcement retry). Lists what was found without claiming the model's synthesis is trustworthy."""
+    if not result.sources:
+        return NO_MATCH_REPLY
+    titles = ", ".join(s.title for s in result.sources)
+    return f"I found information that may be relevant but couldn't produce a properly cited answer. Sources: {titles}."
