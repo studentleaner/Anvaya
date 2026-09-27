@@ -76,3 +76,91 @@ def test_login_rejected_and_network_error():
         return rejected, err, bad._token
 
     assert run(go()) == (None, None, None)
+
+
+# ---------------------------------------------------------------- complete_stream
+def sse_body(*frames):
+    return "".join(frames).encode()
+
+
+def frame(event, data):
+    import json
+    return (f"event: {event}\n" if event else "") + f"data: {json.dumps(data)}\n\n"
+
+
+def stream_handler(status=200, body=b"", raises=None):
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "tok", "token_type": "bearer"})
+        assert request.url.path == "/v1/complete/stream"
+        assert request.headers["authorization"] == "Bearer tok"
+        if raises:
+            raise raises
+        return httpx.Response(status, content=body)
+
+    return handler
+
+
+def collect(client, **kw):
+    async def go():
+        out = []
+        async for item in client.complete_stream(prompt="hi", system="s", model="llama3.1:8b", **kw):
+            out.append(item)
+        await client.aclose()
+        return out
+
+    return run(go())
+
+
+def test_stream_tokens_then_done_and_request_body_is_pinned_local():
+    seen = {}
+
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "tok"})
+        import json
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, content=sse_body(
+            frame(None, {"token": "Hel"}), ": comment ignored\n", "\n", frame(None, {"token": "lo"}),
+            frame(None, {"other": 1}), "data:\n\n", frame("done", {"elapsed": 1.5})))
+
+    out = collect(make(handler), session_id="conv_x", history=["user: a"])
+    assert out == [{"token": "Hel"}, {"token": "lo"}, {"done": True, "elapsed": 1.5}]
+    assert seen["provider"] == "ollama" and seen["model"] == "llama3.1:8b" and seen["project_id"] == "anvaya"
+    assert seen["quality"] == "standard" and seen["conversation_history"] == ["user: a"]
+    assert seen["task_type"] == ""  # a known task_type would override the pinned local model (ModelBus._resolve)
+    assert seen["session_id"] == "conv_x"
+
+
+def test_stream_without_credentials():
+    out = collect(make(lambda r: httpx.Response(500), Settings()))
+    assert out[0]["error"] == "gateway_down"
+
+
+def test_stream_error_event():
+    out = collect(make(stream_handler(body=sse_body(frame("error", {"detail": "boom"})))))
+    assert out == [{"error": "model_timeout", "detail": "boom"}]
+
+
+def test_stream_http_statuses():
+    assert collect(make(stream_handler(status=401)))[0]["error"] == "gateway_down"
+    bad = collect(make(stream_handler(status=400, body=b'{"detail":"Content rejected"}')))
+    assert bad[0]["error"] == "bad_request" and "rejected" in bad[0]["detail"]
+    assert collect(make(stream_handler(status=502)))[0] == {"error": "gateway_down", "detail": "gateway HTTP 502"}
+
+
+def test_stream_401_clears_cached_token():
+    async def go():
+        c = make(stream_handler(status=401))
+        async for _ in c.complete_stream(prompt="p", system="s", model="m"):
+            pass
+        return c._token
+
+    assert run(go()) is None
+
+
+def test_stream_timeout_network_and_truncated():
+    assert collect(make(stream_handler(raises=httpx.ReadTimeout("slow"))))[0]["error"] == "model_timeout"
+    assert collect(make(stream_handler(raises=httpx.ConnectError("refused"))))[0]["error"] == "gateway_down"
+    cut = collect(make(stream_handler(body=sse_body(frame(None, {"token": "a"})))))
+    assert cut[0] == {"token": "a"} and cut[1]["error"] == "gateway_down"

@@ -2,13 +2,15 @@
 
 Auth model (verified 2026-09-26): every gateway route uses the admin-style JWT (`POST /token`, OAuth2 password
 form, 30-minute tokens). `PROJECT_API_KEYS` / `X-API-Key` exist in api/auth.py but are NOT wired to any route,
-so Anvaya logs in as its own service user and refreshes the token before it expires.
+so Anvaya logs in as its own service user (SERVICE_USERS_JSON_B64 on the gateway) and refreshes the token
+before it expires.
 """
 
 from __future__ import annotations
 
+import json
 import time
-from typing import Optional
+from typing import AsyncIterator, Optional, Sequence
 
 import httpx
 
@@ -62,3 +64,59 @@ class AbstractAIClient:
         self._token = r.json()["access_token"]
         self._token_at = time.monotonic()
         return self._token
+
+    async def complete_stream(self, *, prompt: str, system: str, model: str, session_id: str = "",
+                              history: Sequence[str] = (), max_tokens: int = 500,
+                              temperature: float = 0.3) -> AsyncIterator[dict]:
+        """Stream a local completion. Yields exactly one terminal item: {"done": True, ...} or {"error": code, ...};
+        before that zero or more {"token": str}. The provider is PINNED to ollama (RouteLLM's default policy points
+        at a model that is not installed and one that cannot run on this GPU) and the model is chosen by us."""
+        token = await self.login()
+        if not token:
+            yield {"error": "gateway_down", "detail": "AbstractAI login failed or is not configured"}
+            return
+        body = {
+            "prompt": prompt, "system": system, "provider": LOCAL_PROVIDER, "model": model,
+            # task_type MUST stay empty: ModelBus._resolve() lets any known task_type (triage/planning/complex/frontier)
+            # OVERRIDE the pinned provider/model - planning -> BUS_PLANNING_MODEL (default "llama3:8b", not installed:
+            # HTTP 404) and complex/frontier -> Anthropic (cloud). Empty = our pin is honoured.
+            "task_type": "", "quality": "standard", "project_id": self._s.project_id,
+            "temperature": temperature, "max_tokens": max_tokens, "session_id": session_id,
+            "conversation_history": list(history),
+        }
+        try:
+            async with self._http.stream("POST", "/v1/complete/stream", json=body,
+                                         headers={"Authorization": f"Bearer {token}"}) as r:
+                if r.status_code == 401:
+                    self._token = None
+                    yield {"error": "gateway_down", "detail": "AbstractAI rejected the login"}
+                    return
+                if r.status_code == 400:
+                    yield {"error": "bad_request", "detail": (await r.aread()).decode("utf-8", "replace")[:300]}
+                    return
+                if r.status_code != 200:
+                    yield {"error": "gateway_down", "detail": f"gateway HTTP {r.status_code}"}
+                    return
+                event = "message"
+                async for line in r.aiter_lines():
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data = json.loads(line[5:].strip() or "{}")
+                        if event == "error":
+                            yield {"error": "model_timeout", "detail": str(data.get("detail", ""))[:300]}
+                            return
+                        if event == "done":
+                            yield {"done": True, "elapsed": data.get("elapsed")}
+                            return
+                        if data.get("token"):
+                            yield {"token": data["token"]}
+                    elif not line:
+                        event = "message"
+        except httpx.ReadTimeout:
+            yield {"error": "model_timeout", "detail": "no output within the request timeout"}
+            return
+        except httpx.HTTPError as exc:
+            yield {"error": "gateway_down", "detail": type(exc).__name__}
+            return
+        yield {"error": "gateway_down", "detail": "stream ended without a done event"}
