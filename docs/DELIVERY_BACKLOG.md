@@ -48,13 +48,13 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 | M1-S1-T3 | Task | Kids profile refused; local-only enforced | ✅ | — | `main.py` 403 for `profile:"kids"`; `assert_local` raises on any non-ollama provider |
 | M1-S1-T4 | Task | Model-state reporting (unknown/loading/warm) in `status` events | ✅ | M0-S1-T2 | `chat.py::wire_state`; `tests/test_main.py::test_chat_announces_model_loading_while_warming` |
 | M1-S1-T5 | Task | System prompt served from PromptVault with a code fallback | ✅ | M0-S2-T4 | `anvaya_api/bootstrap.py::PromptCache`; `test_chat_uses_prompt_from_vault` |
-| M1-S2 | Story | Retrieval: the answer is grounded in Home Knowledge, not just the model's own head | ⬜ | M0-S3 | — |
-| M1-S2-T1 | Task | Scope resolver: `scope` + `context` → allowed plugins/classes → `doc_ids` | ⬜ | — | — |
-| M1-S2-T2 | Task | Call `GET /v1/knowledge/search` (hybrid) with resolved `doc_ids`; build the numbered SOURCES block | ⬜ | T1 | — |
-| M1-S2-T3 | Task | Citation-required prompting; strip/replace an answer whose `[src_n]` don't exist | ⬜ | T2 | — |
-| M1-S3 | Story | Redaction: secrets and out-of-class data never reach the model | ⬜ | M1-S2 | — |
-| M1-S3-T1 | Task | Hard path deny-list (`creds.html`, `.env*`, `htpasswd`, `secrets.yaml`, `.storage/**`) enforced at ingest, not just at query time | ⬜ | M2 (ingest pipeline) | — |
-| M1-S3-T2 | Task | Regex redaction of secret-shaped strings in retrieved chunks before they enter the prompt | ⬜ | M1-S2-T2 | — |
+| M1-S2 | Story | Retrieval: the answer is grounded in Home Knowledge, not just the model's own head | ✅ **DONE 2026-09-27 (pulled forward with M4-S1)** | M0-S3 | `anvaya_api/retrieval.py`; verified LIVE: "What port does Jenkins run on?" -> cited `[src_3]` -> correct answer, sources returned with plugin/title/uri |
+| M1-S2-T1 | Task | Scope resolver: `scope` + `profile` → allowed classes (`allowed_classes()`) | ✅ | — | `retrieval.py::allowed_classes`; kids never reaches this (refused earlier) |
+| M1-S2-T2 | Task | Call `GET /v1/knowledge/search` (hybrid) + join `GET /v1/knowledge/documents` for metadata (search alone doesn't return it - known-issues **O31**); build the numbered SOURCES block | ✅ | T1 | `retrieval.py::retrieve` |
+| M1-S2-T3 | Task | Citation-required prompting; strip/replace an answer whose `[src_n]` don't exist | 🟡 **Partial**: the prompt instructs citation and `has_valid_citation()` checks it, but only as **telemetry** (a warning log) - it does NOT rewrite an uncited answer, because that needs buffering the full stream before showing anything (trades away live token-by-token UX). Deferred: a real decision on that trade-off | T2 | `chat.py::chat_events` logs "cited no source" |
+| M1-S3 | Story | Redaction: secrets and out-of-class data never reach the model | ✅ **DONE 2026-09-27** | M1-S2 | `anvaya_api/redact.py` - regex secret patterns + the project's standard password; runs on every ingested doc |
+| M1-S3-T1 | Task | Hard path deny-list (`creds.html`, `.env*`, `htpasswd`, `secrets.yaml`, `.storage/**`) enforced at ingest | ✅ | M4-S1 | `ingest_config.py::DENY_SUBSTRINGS` + `is_denied()`; tested (`test_scan_docs_reads_md_and_html_skips_denied_and_binary`) |
+| M1-S3-T2 | Task | Regex redaction of secret-shaped strings before ingest | ✅ | M1-S2-T2 | `redact.py`; 5 tests |
 | M1-S4 | Story | Conversations persist across requests | ⬜ | — | Currently: client-supplied `history` (≤ 6 turns), no server-side store — `CONTRACTS.md` §1.1 `history` field |
 | M1-S4-T1 | Task | SQLite `conversations`/`messages` tables in `anvaya_api` | ⬜ | — | — |
 | M1-S4-T2 | Task | `GET/DELETE /api/conversations[...]` | ⬜ | T1 | — |
@@ -76,14 +76,15 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 | M2-S1-T4 | Task | Streaming render via `fetch` + `ReadableStream` (not `EventSource`, which can't POST) | ✅ | M1-S1 | `homechat.js::sendMessage` |
 | M2-S1-T5 | Task | **In-drawer sign-in** — a 401 shows a small form inside the drawer (same `hl_auth` cookie as `login.html`), never a page navigation; the pending question is re-sent after sign-in | ✅ | — | `homechat.js::showLogin`; verified live in-browser (screenshot: sign-in form renders inside the open drawer, URL unchanged) |
 | M2-S1-T6 | Task | JS syntax regression guard | ✅ | — | `tests/Test-Launchers.ps1` syntax-checks every inline `<script>` on dashboard + documentation pages (added after an apostrophe bug once broke `vpn.html` silently) |
-| M2-S2 | Story | Mounted everywhere it should be, nowhere it shouldn't | 🔄 | S1 | 4 pages live: `portal.html` (pre-existing), `home.html`, `alerts.html`, `index.html` — all 2026-09-27 |
+| M2-S2 | Story | Mounted everywhere it should be, nowhere it shouldn't | ✅ **8/9 pages done 2026-09-27** | S1 | `portal.html`, `home.html`, `alerts.html`, `index.html`, `arrivals.html`, `solar.html`, `news.html`, `containers.html`, Finance OS SPA |
 | M2-S2-T1 | Task | Mount on `portal.html` (Family + System profiles via `MODE`, never Kids) | ✅ | — | `documentation/portal.html` |
 | M2-S2-T2 | Task | Mount on `home.html` (profile `family`) | ✅ | — | `documentation/home.html` |
 | M2-S2-T3 | Task | Mount on `alerts.html` (profile `family`) | ✅ | — | `documentation/alerts.html` |
 | M2-S2-T4 | Task | Mount on `index.html` (profile `system`, behind the docs login) | ✅ | — | `documentation/index.html` |
-| M2-S2-T5 | Task | Mount on the remaining HomeLab pages (`arrivals.html`, `solar.html`, `news.html`, `containers.html`, `tv.html` if feasible on webOS) | ⬜ | — | Not started — each is a one-line addition once M2-S1 exists; sequence by traffic |
-| M2-S2-T6 | Task | Mount on the Finance OS SPA (separate repo/app) | ⬜ | cross-repo coordination | Not started; Finance OS is read-only for Anvaya per D-10, so this is low-risk when scheduled |
-| M2-S3 | Story | Sources are visible and clickable | ⬜ | M1-S2 | Contract defined (`sources` SSE event); UI chips not built (nothing to show until retrieval exists) |
+| M2-S2-T5 | Task | Mount on `arrivals.html`/`solar.html`/`news.html` (family) + `containers.html` (system) | ✅ **DONE 2026-09-27** | — | 4 launcher tests, live syntax scan |
+| M2-S2-T6 | Task | Mount on the Finance OS SPA (separate repo) | ✅ **DONE 2026-09-27** | cross-repo | `Apps/Finance OS/web/index.html` - absolute `/js/homechat.js` path (page is served under `/finance/`, script lives on homelab-docs root) |
+| M2-S2-T7 | Task | `tv.html` | ⛔ **Deliberately deferred** | — | LG webOS has severe memory constraints (`tv-launcher-dev.md`: canvas GPU memory, `navigateClean()` rules) - a blind widget mount risks the exact OOM class of bug that page already works around. Needs its own design pass (e.g. remote-control-only, no drawer), not a copy-paste of the desktop widget |
+| M2-S3 | Story | Sources are visible and clickable | 🔄 | M1-S2 (done) | Backend emits real `sources` events now (verified live); the widget's UI chips to render them are not built yet - `homechat.js` currently ignores the `sources` event payload |
 | M2-S4 | Story | Action buttons (propose → preview → confirm) | ⬜ | M3 | — |
 | M2-B1 | Bug | An apostrophe inside a single-quoted JS string once left `vpn.html` on "Loading…" forever while every API test passed | ✅ Fixed (prior incident, guard added) | — | Root-caused the class of bug; `homechat.js` was written and syntax-checked against exactly this regression (M2-S1-T6) before first mount |
 
@@ -115,9 +116,9 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 
 | ID | Type | Title | Status | Depends on | Evidence |
 |---|---|---|---|---|---|
-| M4-S1 | Story | Documentation and plugin data get ingested automatically | ⬜ | M0-S3, M3-S2 | — |
-| M4-S1-T1 | Task | Ingest pipeline: `documentation/*.md` + plugin exports, content-hash skip, stale-delete | ⬜ | — | — |
-| M4-S1-T2 | Task | Scheduled reindex — **hidden, user-level, no catch-up** (per HomeLab's scheduler rules; a catch-up burst after a missed night already broke other tasks once, see HomeLab known-issues O20) | ⬜ | T1 | — |
+| M4-S1 | Story | Documentation and plugin data get ingested automatically | ✅ **DONE 2026-09-27, pulled forward** (scope: catalogued sources, not a raw drive scan - see ARCHITECTURE.md) | M0-S3 | `anvaya_api/ingest.py`; live run: 696 documents (419 atlas + 157 hub + 92 docs + 28 tasks), idempotent (stable ids + content-hash diff), 26 tests / 100% branch |
+| M4-S1-T1 | Task | Ingest pipeline: docs (redacted/deny-listed) + hub catalog + atlas + scheduled tasks; content-hash skip, orphan delete | ✅ | — | `ingest.py::reindex` |
+| M4-S1-T2 | Task | Scheduled reindex — **hidden, user-level, no catch-up** (per HomeLab's scheduler rules; a catch-up burst after a missed night already broke other tasks once, see HomeLab known-issues O20) | ⬜ | T1 | `POST /api/admin/reindex` exists and works but has no scheduled trigger yet - it was run manually for this milestone |
 | M4-S2 | Story | A golden question set exists and Anvaya is graded against it | ⬜ | M1-S2 | — |
 | M4-S2-T1 | Task | ≥ 50 questions in `tests/golden/questions.yaml`, sourced from real docs + synthetic finance data only | ⬜ | — | — |
 | M4-S2-T2 | Task | Eval gate via AbstractAI's EvaluationBus (local judge): citation validity ≥ 95 %, no-answer-when-absent ≥ 90 %, injection resistance 100 % | ⬜ | T1 | — |

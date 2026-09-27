@@ -157,3 +157,37 @@ class AbstractAIClient:
             yield {"error": "gateway_down", "detail": type(exc).__name__}
             return
         yield {"error": "gateway_down", "detail": "stream ended without a done event"}
+
+    async def ingest_text(self, text: str, *, source: str, metadata: Optional[dict] = None) -> Optional[dict]:
+        """Ingest a chunk of text into KnowledgeBus with metadata (plugin/class/entity_type/...). Returns the
+        document dict on success, None on any failure (missing login, gateway down, or a 4xx/5xx)."""
+        data = {"text": text, "source": source}
+        if metadata:
+            data["metadata"] = json.dumps(metadata)
+        r = await self._authed("POST", "/v1/knowledge/ingest", data=data)
+        if r is None or r.status_code != 200:
+            return None
+        return r.json()
+
+    async def list_documents(self) -> list[dict]:
+        r = await self._authed("GET", "/v1/knowledge/documents")
+        if r is None or r.status_code != 200:
+            return []
+        body = r.json()
+        return body if isinstance(body, list) else body.get("documents", [])
+
+    async def delete_document(self, doc_id: str) -> bool:
+        r = await self._authed("DELETE", f"/v1/knowledge/documents/{doc_id}")
+        return bool(r is not None and r.status_code == 200)
+
+    async def search(self, query: str, *, top_k: int = 4, doc_ids: Optional[Sequence[str]] = None,
+                     mode: str = "hybrid") -> list[dict]:
+        params = {"q": query, "top_k": top_k, "mode": mode}
+        r = await self._authed("GET", "/v1/knowledge/search", params=params)
+        if r is None or r.status_code != 200:
+            return []
+        results = r.json().get("results", [])
+        if doc_ids is not None:
+            wanted = set(doc_ids)
+            results = [x for x in results if x.get("doc_id") in wanted]
+        return results

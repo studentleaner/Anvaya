@@ -164,3 +164,55 @@ def test_stream_timeout_network_and_truncated():
     assert collect(make(stream_handler(raises=httpx.ConnectError("refused"))))[0]["error"] == "gateway_down"
     cut = collect(make(stream_handler(body=sse_body(frame(None, {"token": "a"})))))
     assert cut[0] == {"token": "a"} and cut[1]["error"] == "gateway_down"
+
+
+# ---------------------------------------------------------------- knowledge ops
+def kb_gw(handler_map):
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "tok"})
+        h = handler_map.get(request.url.path)
+        return h(request) if h else httpx.Response(404)
+
+    return handler
+
+
+def test_ingest_text_success_and_metadata_serialized():
+    seen = {}
+
+    def ingest(request):
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json={"doc_id": "d1", "status": "ready"})
+
+    doc = run(make(kb_gw({"/v1/knowledge/ingest": ingest})).ingest_text("hi", source="s", metadata={"class": "public"}))
+    assert doc == {"doc_id": "d1", "status": "ready"}
+    assert 'metadata=%7B%22class%22%3A+%22public%22%7D' in seen["body"] or '"class"' in seen["body"]
+
+
+def test_ingest_text_no_metadata_and_failure_paths():
+    ok_no_meta = run(make(kb_gw({"/v1/knowledge/ingest": lambda r: httpx.Response(200, json={"doc_id": "d1"})})).ingest_text("hi", source="s"))
+    assert ok_no_meta == {"doc_id": "d1"}
+    assert run(make(kb_gw({"/v1/knowledge/ingest": lambda r: httpx.Response(422)})).ingest_text("hi", source="s")) is None
+    assert run(make(lambda r: httpx.Response(500), Settings()).ingest_text("hi", source="s")) is None
+
+
+def test_list_documents_shapes_and_failure():
+    assert run(make(kb_gw({"/v1/knowledge/documents": lambda r: httpx.Response(200, json={"documents": [{"doc_id": "a"}]})})).list_documents()) == [{"doc_id": "a"}]
+    assert run(make(kb_gw({"/v1/knowledge/documents": lambda r: httpx.Response(200, json=[{"doc_id": "b"}])})).list_documents()) == [{"doc_id": "b"}]
+    assert run(make(kb_gw({"/v1/knowledge/documents": lambda r: httpx.Response(500)})).list_documents()) == []
+    assert run(make(lambda r: httpx.Response(500), Settings()).list_documents()) == []
+
+
+def test_delete_document():
+    assert run(make(kb_gw({"/v1/knowledge/documents/x": lambda r: httpx.Response(200, json={"deleted": "x"})})).delete_document("x")) is True
+    assert run(make(kb_gw({"/v1/knowledge/documents/x": lambda r: httpx.Response(404)})).delete_document("x")) is False
+
+
+def test_search_filters_by_doc_ids_and_handles_failure():
+    def search(request):
+        return httpx.Response(200, json={"results": [{"doc_id": "a", "text": "x"}, {"doc_id": "b", "text": "y"}]})
+
+    c = make(kb_gw({"/v1/knowledge/search": search}))
+    assert run(c.search("q")) == [{"doc_id": "a", "text": "x"}, {"doc_id": "b", "text": "y"}]
+    assert run(c.search("q", doc_ids=["b"])) == [{"doc_id": "b", "text": "y"}]
+    assert run(make(kb_gw({"/v1/knowledge/search": lambda r: httpx.Response(500)})).search("q")) == []

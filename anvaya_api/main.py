@@ -12,9 +12,10 @@ from fastapi.responses import StreamingResponse
 
 from . import __version__
 from .abstractai import AbstractAIClient
-from .bootstrap import ANSWER_PROMPT, ModelState, PromptCache, bootstrap
+from .bootstrap import ModelState, PromptCache, bootstrap
 from .chat import SYSTEM_PROMPT, ChatRequest, chat_events, wire_state
 from .config import LOCAL_PROVIDER, Settings
+from .ingest import IngestReport, reindex
 
 
 def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIClient] = None,
@@ -23,6 +24,7 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
     ai = client or AbstractAIClient(s)
     ms = ModelState()
     prompts = PromptCache(ai, SYSTEM_PROMPT)
+    last_reindex: dict = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -57,7 +59,8 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
             "model": {"name": s.primary_model, "state": wire_state(ms), "detail": ms.detail},
             "bootstrap": ms.bootstrap,
             "plugins": [],
-            "mode": "model_only",  # TEST MODE: no Home Knowledge / plugins yet (PLAN Phase 1-4)
+            "mode": "knowledge",  # retrieval-grounded since 2026-09-27 (PLAN Phase 1.2/1.3)
+            "last_reindex": last_reindex,
             "local_only": True,
             "project_id": s.project_id,
             "version": __version__,
@@ -74,6 +77,17 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/admin/reindex")
+    async def admin_reindex() -> dict:
+        """Re-sync Home Knowledge from docs/hub/atlas/tasks. Not profile-gated here - the docs nginx already puts
+        every mount of this API behind the login; a dedicated System-only check can be added once Anvaya has its
+        own per-request caller identity (PLAN Phase 3)."""
+        report: IngestReport = await reindex(ai)
+        last_reindex.clear()
+        last_reindex.update(scanned=report.scanned, ingested=report.ingested, unchanged=report.unchanged,
+                            deleted=report.deleted, failed=report.failed, at=time.time())
+        return last_reindex
 
     return app
 

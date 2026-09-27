@@ -92,7 +92,7 @@ def test_chat_streams_contract_events_in_order():
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     ev = events(r.text)
     assert [e for e, _ in ev] == ["status", "context", "status", "token", "token", "sources", "done"]
-    assert ev[1][1] == {"scope": "this_app", "plugins": [], "redacted": 0, "mode": "model_only"}
+    assert ev[1][1] == {"scope": "this_app", "plugins": [], "redacted": 0, "mode": "knowledge"}
     assert "".join(d["t"] for e, d in ev if e == "token") == "It converts DC to AC."
     done = ev[-1][1]
     assert done["local"] is True and done["model"] == "ollama/llama3.1:8b" and done["elapsed_ms"] >= 0
@@ -134,7 +134,7 @@ def test_history_lines_and_status_mode():
     items = [HistoryItem(role="user", text="a"), HistoryItem(role="assistant", text="b")]
     assert history_lines(items) == ["user: a", "assistant: b"]
     body = client_for(Settings(), gateway).get("/api/status").json()
-    assert body["mode"] == "model_only"
+    assert body["mode"] == "knowledge"
 
 
 def test_chat_marks_model_warm_and_status_reports_it():
@@ -238,4 +238,59 @@ def test_chat_uses_prompt_from_vault():
 
     c = client_for(Settings(username="a", password="b"), handler)
     c.post("/api/chat", json=CHAT)
-    assert captured["system"] == "VAULT PROMPT"
+    assert captured["system"].startswith("VAULT PROMPT")
+
+
+def test_status_reports_last_reindex_and_gains_no_new_fields_before_reindex_runs():
+    body = client_for(Settings(), gateway).get("/api/status").json()
+    assert body["last_reindex"] == {}
+
+
+def test_admin_reindex_endpoint_returns_a_report_and_status_reflects_it():
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path == "/v1/knowledge/documents":
+            return httpx.Response(200, json={"documents": []})
+        if request.url.path == "/v1/knowledge/ingest":
+            return httpx.Response(200, json={"doc_id": "d1", "status": "ready"})
+        return httpx.Response(404)
+
+    c = client_for(Settings(username="a", password="b"), handler)
+    r = c.post("/api/admin/reindex")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scanned"] >= 0 and "at" in body
+    assert c.get("/api/status").json()["last_reindex"]["scanned"] == body["scanned"]
+
+
+def test_build_system_prompt_with_and_without_sources():
+    from anvaya_api.chat import build_system_prompt
+    from anvaya_api.retrieval import RetrievalResult, Source
+    empty = build_system_prompt("BASE", RetrievalResult())
+    assert empty.startswith("BASE") and "No information about this home" in empty
+    with_src = build_system_prompt("BASE", RetrievalResult(sources=[Source("id1", "homelab.docs", "t", "u", "s", "full text")]))
+    assert "SOURCES:" in with_src and "[src_1] full text" in with_src
+
+
+def test_chat_cites_a_real_source_no_warning_logged(caplog):
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path == "/v1/knowledge/search":
+            return httpx.Response(200, json={"results": [{"doc_id": "a", "text": "The inverter is a Deye."}]})
+        if request.url.path == "/v1/knowledge/documents":
+            return httpx.Response(200, json={"documents": [{"doc_id": "a", "metadata": {"plugin": "homelab.docs", "class": "public", "path": "solar.md"}}]})
+        if request.url.path == "/v1/complete/stream":
+            return httpx.Response(200, content=b'data: {"token": "It is a Deye [src_1]."}\n\nevent: done\ndata: {"elapsed": 1}\n\n')
+        return httpx.Response(404)
+
+    c = client_for(Settings(username="a", password="b"), handler)
+    with caplog.at_level("WARNING"):
+        r = c.post("/api/chat", json=CHAT)
+    ev = events(r.text)
+    ctx = ev[1][1]
+    assert ctx["plugins"] == ["homelab.docs"]
+    sources_ev = next(d for e, d in ev if e == "sources")
+    assert sources_ev["items"] == [{"id": "src_1", "plugin": "homelab.docs", "title": "solar.md", "uri": "/solar.md", "snippet": "The inverter is a Deye."}]
+    assert not any("cited no source" in rec.message for rec in caplog.records)
