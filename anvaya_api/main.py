@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 from typing import Optional
 
@@ -10,14 +12,30 @@ from fastapi.responses import StreamingResponse
 
 from . import __version__
 from .abstractai import AbstractAIClient
-from .chat import ChatRequest, chat_events
+from .bootstrap import ANSWER_PROMPT, ModelState, PromptCache, bootstrap
+from .chat import SYSTEM_PROMPT, ChatRequest, chat_events, wire_state
 from .config import LOCAL_PROVIDER, Settings
 
 
-def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIClient] = None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIClient] = None,
+               run_bootstrap: bool = True) -> FastAPI:
     s = settings or Settings.from_env()
     ai = client or AbstractAIClient(s)
-    app = FastAPI(title="Anvaya API", version=__version__)
+    ms = ModelState()
+    prompts = PromptCache(ai, SYSTEM_PROMPT)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        task = asyncio.create_task(bootstrap(ai, s, ms, SYSTEM_PROMPT)) if run_bootstrap else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    app = FastAPI(title="Anvaya API", version=__version__, lifespan=lifespan)
 
     @app.get("/healthz")
     async def healthz() -> dict:
@@ -36,7 +54,8 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
             "gateway": "up" if up else "down",
             "auth": auth,
             "provider": LOCAL_PROVIDER,
-            "model": {"name": s.primary_model, "state": "unknown"},  # real warm/cold state arrives with PLAN 1.6
+            "model": {"name": s.primary_model, "state": wire_state(ms), "detail": ms.detail},
+            "bootstrap": ms.bootstrap,
             "plugins": [],
             "mode": "model_only",  # TEST MODE: no Home Knowledge / plugins yet (PLAN Phase 1-4)
             "local_only": True,
@@ -50,7 +69,8 @@ def create_app(settings: Optional[Settings] = None, client: Optional[AbstractAIC
             raise HTTPException(status_code=403, detail="Ask Home is not available on the Kids profile")
         started = time.monotonic()
         return StreamingResponse(
-            chat_events(req, ai, s, lambda: int((time.monotonic() - started) * 1000)),
+            chat_events(req, ai, s, lambda: int((time.monotonic() - started) * 1000),
+                        await prompts.get(), ms),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

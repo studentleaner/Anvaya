@@ -27,7 +27,8 @@ def test_status_ok():
     body = client_for(Settings(username="a", password="b"), gateway).get("/api/status").json()
     assert body["gateway"] == "up" and body["auth"] == "ok"
     assert body["local_only"] is True and body["provider"] == "ollama"
-    assert body["model"] == {"name": "llama3.1:8b", "state": "unknown"} and body["plugins"] == []
+    assert body["model"] == {"name": "llama3.1:8b", "state": "unknown", "detail": ""} and body["plugins"] == []
+    assert body["bootstrap"] == {}
 
 
 def test_status_not_configured():
@@ -134,3 +135,107 @@ def test_history_lines_and_status_mode():
     assert history_lines(items) == ["user: a", "assistant: b"]
     body = client_for(Settings(), gateway).get("/api/status").json()
     assert body["mode"] == "model_only"
+
+
+def test_chat_marks_model_warm_and_status_reports_it():
+    body = 'data: {"token": "x"}\n\nevent: done\ndata: {"elapsed": 1}\n\n'
+    c = client_for(Settings(username="a", password="b"), chat_gateway(body))
+    assert c.get("/api/status").json()["model"]["state"] == "unknown"
+    ev = events(c.post("/api/chat", json=CHAT).text)
+    assert ev[0][1]["model_state"] == "unknown"       # first request: nothing known yet
+    assert c.get("/api/status").json()["model"]["state"] == "warm"
+    ev2 = events(c.post("/api/chat", json=CHAT).text)
+    assert ev2[0][1]["model_state"] == "warm" and ev2[2][1] == {"stage": "generating", "model_state": "warm"}
+
+
+def test_wire_state_mapping():
+    from anvaya_api.bootstrap import ModelState
+    from anvaya_api.chat import wire_state
+    ms = ModelState()
+    ms.set("warming")
+    assert wire_state(ms) == "loading"
+    ms.set("error", "x")
+    assert wire_state(ms) == "unknown"
+
+
+def test_chat_announces_model_loading_while_warming():
+    from anvaya_api.bootstrap import ModelState
+    from anvaya_api.chat import ChatRequest, chat_events
+
+    async def collect_first_events():
+        ai = AbstractAIClient(Settings(username="a", password="b"),
+                              transport=httpx.MockTransport(chat_gateway('event: done\ndata: {"elapsed": 1}\n\n')))
+        ms = ModelState()
+        ms.set("warming")
+        out = []
+        async for frame in chat_events(ChatRequest(**CHAT), ai, Settings(username="a", password="b"), lambda: 1, "SYS", ms):
+            out.append(frame)
+        return out
+
+    import asyncio
+    frames = asyncio.run(collect_first_events())
+    assert '"stage": "model_loading"' in frames[2] and '"model_state": "loading"' in frames[2]
+
+
+def test_lifespan_runs_bootstrap_in_background_and_cancels_cleanly():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path.startswith("/admin/costs"):
+            return httpx.Response(200, json={})
+        if request.url.path.startswith("/v1/prompts"):
+            return httpx.Response(200, json={"template": "T"})
+        if request.url.path == "/v1/complete/stream":
+            return httpx.Response(200, content=b'event: done\ndata: {"elapsed": 1}\n\n')
+        return httpx.Response(404)
+
+    s = Settings(username="a", password="b")
+    ai = AbstractAIClient(s, transport=httpx.MockTransport(handler))
+    import time as _t
+    with TestClient(create_app(s, ai)) as c:
+        for _ in range(100):
+            body = c.get("/api/status").json()
+            if body["model"]["state"] == "warm":
+                break
+            _t.sleep(0.05)
+        assert body["model"]["state"] == "warm" and body["bootstrap"] == {"budget": True, "prompts": True}
+    assert "/v1/complete/stream" in seen
+
+
+def test_lifespan_cancels_a_slow_bootstrap():
+    def slow(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        return httpx.Response(200, json={})
+
+    s = Settings(username="a", password="b")
+    ai = AbstractAIClient(s, transport=httpx.MockTransport(slow))
+    with TestClient(create_app(s, ai)) as c:      # exits immediately: the still-running warm-up task is cancelled
+        assert c.get("/healthz").status_code == 200
+
+
+def test_lifespan_without_bootstrap():
+    s = Settings()
+    with TestClient(create_app(s, AbstractAIClient(s, transport=httpx.MockTransport(gateway)), run_bootstrap=False)) as c:
+        assert c.get("/healthz").status_code == 200
+
+
+def test_chat_uses_prompt_from_vault():
+    captured = {}
+
+    def handler(request):
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path == "/v1/prompts/anvaya.answer":
+            return httpx.Response(200, json={"template": "VAULT PROMPT"})
+        if request.url.path == "/v1/complete/stream":
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, content=b'event: done\ndata: {"elapsed": 1}\n\n')
+        return httpx.Response(404)
+
+    c = client_for(Settings(username="a", password="b"), handler)
+    c.post("/api/chat", json=CHAT)
+    assert captured["system"] == "VAULT PROMPT"

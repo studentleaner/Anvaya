@@ -13,6 +13,7 @@ from typing import AsyncIterator, Literal, Optional
 from pydantic import BaseModel, Field
 
 from .abstractai import AbstractAIClient
+from .bootstrap import ModelState
 from .config import LOCAL_PROVIDER, Settings
 from .ids import new_id
 
@@ -56,16 +57,24 @@ def history_lines(items: list[HistoryItem]) -> list[str]:
     return [f"{h.role}: {h.text}" for h in items[-MAX_HISTORY:]]
 
 
-async def chat_events(req: ChatRequest, ai: AbstractAIClient, s: Settings, elapsed_ms) -> AsyncIterator[str]:
+def wire_state(ms: ModelState) -> str:
+    return {"warm": "warm", "warming": "loading"}.get(ms.state, "unknown")
+
+
+async def chat_events(req: ChatRequest, ai: AbstractAIClient, s: Settings, elapsed_ms,
+                      system_prompt: str, ms: ModelState) -> AsyncIterator[str]:
     conversation_id = req.conversation_id or new_id("conv")
     message_id = new_id("msg")
-    yield sse("status", {"stage": "routing", "model_state": "unknown"})
+    yield sse("status", {"stage": "routing", "model_state": wire_state(ms)})
     yield sse("context", {"scope": req.scope, "plugins": [], "redacted": 0, "mode": "model_only"})
-    yield sse("status", {"stage": "generating", "model_state": "unknown"})
+    yield sse("status", {"stage": "model_loading" if ms.state == "warming" else "generating",
+                         "model_state": wire_state(ms)})
     # complete_stream ALWAYS ends with a terminal item (done/error), so this loop never falls through.
-    async for item in ai.complete_stream(prompt=req.message, system=SYSTEM_PROMPT, model=s.primary_model,
+    async for item in ai.complete_stream(prompt=req.message, system=system_prompt, model=s.primary_model,
                                          session_id=conversation_id, history=history_lines(req.history)):  # pragma: no branch
         if "token" in item:
+            if ms.state != "warm":
+                ms.set("warm")          # a token proves the model is loaded and answering
             yield sse("token", {"t": item["token"]})
         elif "error" in item:
             yield sse("error", {"code": item["error"], "message": item.get("detail", ""), "fallback": "lookup_only"})

@@ -65,6 +65,43 @@ class AbstractAIClient:
         self._token_at = time.monotonic()
         return self._token
 
+    async def _authed(self, method: str, path: str, **kw) -> Optional[httpx.Response]:
+        """Authenticated call; None when we cannot log in or the gateway is unreachable (callers degrade gracefully)."""
+        token = await self.login()
+        if not token:
+            return None
+        try:
+            return await self._http.request(method, path, headers={"Authorization": f"Bearer {token}"}, **kw)
+        except httpx.HTTPError:
+            return None
+
+    async def ensure_budget(self, project_id: str, monthly_usd: float = 0.0001) -> bool:
+        """Cloud tripwire (defence in depth): a tiny hard-reject CostGuard budget for our project. CostGuard is
+        in-memory and post-hoc (it cannot stop the first paid call), so the real guarantees are the pinned
+        provider and assert_local - this only makes a stray paid call fail loudly afterwards."""
+        r = await self._authed("PUT", f"/admin/costs/{project_id}", json={"monthly_usd": monthly_usd, "mode": "reject"})
+        return bool(r is not None and r.status_code == 200)
+
+    async def ensure_prompt(self, name: str, template: str) -> bool:
+        """Register `name` in PromptVault if it does not exist yet (the vault file is not persisted across gateway
+        recreation, so we re-seed at start). Never overwrites: an owner-edited version wins."""
+        r = await self._authed("GET", f"/v1/prompts/{name}")
+        if r is None:
+            return False
+        if r.status_code == 200:
+            return True
+        if r.status_code != 404:
+            return False
+        r = await self._authed("POST", f"/v1/prompts/{name}",
+                               json={"template": template, "status": "production", "metadata": {"owner": "anvaya"}})
+        return bool(r is not None and r.status_code == 200)
+
+    async def get_prompt(self, name: str) -> Optional[str]:
+        r = await self._authed("GET", f"/v1/prompts/{name}")
+        if r is None or r.status_code != 200:
+            return None
+        return r.json().get("template")
+
     async def complete_stream(self, *, prompt: str, system: str, model: str, session_id: str = "",
                               history: Sequence[str] = (), max_tokens: int = 500,
                               temperature: float = 0.3) -> AsyncIterator[dict]:
