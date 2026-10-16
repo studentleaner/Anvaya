@@ -180,7 +180,7 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 | PRR-anvaya-05 | O1 deploy artefact — `Dockerfile` (python:3.12-slim, uvicorn on port 8300) + `.dockerignore` | ◐ | `Dockerfile`; `docker build -t anvaya-api:prr-test .` → `naming to docker.io/library/anvaya-api:prr-test done`; `docker run ... -p 127.0.0.1:18300:8300` → `GET /healthz` `200` `{"ok":true,"version":"0.0.1"}`, `Application startup complete` |
 | PRR-anvaya-06 | P5 deploy + rollback doc — `docs/DEPLOYMENT.md` (environments, env var names, deploy + rollback) | ◐ | `docs/DEPLOYMENT.md`; env var names cross-checked against `anvaya_api/config.py::Settings.from_env` and HomeLab `compose/infrastructure/compose.yml` `anvaya-api`; created this commit |
 | PRR-anvaya-07 | P7 runbook — `docs/OPERATIONS.md` (health, logs, startup bootstrap, backup/restore, runbook per failure) | ◐ | `docs/OPERATIONS.md`; failure table cross-checked against `anvaya_api/abstractai.py` error codes (`gateway_down`/`model_timeout`/`bad_request`), `bootstrap.py` retry ladder (5/20/60/120s), `main.py` routes; created this commit |
-| PRR-anvaya-08 | P8 monitored — Dockerfile/compose healthcheck on `/healthz` | ⬜ | — |
+| PRR-anvaya-08 | P8 monitored — portable `HEALTHCHECK` on `/healthz` in `Dockerfile` (see D-04) | ◐ | `Dockerfile` `HEALTHCHECK`; `docker build` → `docker run` → `docker inspect --format '{{.State.Health.Status}}'` → `healthy`; HomeLab compose already healthchecks `/healthz` (PRR-anvaya-08 also notes the Uptime Kuma monitor as an owner item) |
 | PRR-anvaya-09 | P9 API contract — `docs/API_CONTRACT.md` | ⬜ | — |
 | PRR-anvaya-10 | Known issue (no CI) closed by -01/-02; owner-gated items recorded | ⬜ | — |
 

@@ -16,4 +16,7 @@ RUN mkdir -p /data
 
 EXPOSE 8300
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=3).status == 200 else 1)"
+
 CMD ["python", "-m", "uvicorn", "anvaya_api.main:app", "--host", "0.0.0.0", "--port", "8300"]
