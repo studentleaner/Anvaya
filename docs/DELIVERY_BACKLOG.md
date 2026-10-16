@@ -176,7 +176,7 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 | PRR-anvaya-01 | C1 CI pipeline runs — `.github/workflows/ci.yml` (Python 3.12, installs requirements + pytest/pytest-cov) | ◐ | `.github/workflows/ci.yml` — job `test`, step "Run tests (C2)"; created this commit |
 | PRR-anvaya-02 | C2 CI runs the tests — step `python -X utf8 -m pytest -q` | ◐ | `.github/workflows/ci.yml` step "Run tests (C2)"; locally `python -X utf8 -m pytest` → `129 passed` |
 | PRR-anvaya-03 | C3 CI coverage floor — step `python -X utf8 -m pytest --cov --cov-branch`; floor 100% pinned in `pyproject.toml` `[tool.coverage.report] fail_under = 100` (matches rule 14) | ◐ | `.github/workflows/ci.yml` step "Coverage floor - 100% branch (C3)"; locally `129 passed`, `TOTAL ... 100.00%`, `Required test coverage of 100.0% reached.` |
-| PRR-anvaya-04 | C4 CI secret scan — `.github/workflows/secret-scan.yml` (gitleaks CLI v8.18.4, event commit-range only) | ⬜ | — |
+| PRR-anvaya-04 | C4 CI secret scan — `.github/workflows/secret-scan.yml` (gitleaks CLI v8.18.4, event commit-range only; see D-03 for why not full-history) | ◐ | `.github/workflows/secret-scan.yml` — install gitleaks 8.18.4, "Determine scan range", "Scan commits for secrets" (`--log-opts=before..sha`, `-1` on new branch); created this commit |
 | PRR-anvaya-05 | O1 deploy artefact — `Dockerfile` (python:3.12-slim, port 8300) | ⬜ | — |
 | PRR-anvaya-06 | P5 deploy + rollback doc — `docs/DEPLOYMENT.md` | ⬜ | — |
 | PRR-anvaya-07 | P7 runbook — `docs/OPERATIONS.md` | ⬜ | — |
