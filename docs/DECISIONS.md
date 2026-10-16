@@ -20,3 +20,11 @@
 - **Consequences:** An agent working only from this repo must follow the link below for the "why" behind Anvaya's actual product choices.
 
 **→ Full product decision log:** `HomeLab/documentation/anvaya/DECISIONS.md` (D-01 through D-16 and counting).
+
+## D-03 - Production-readiness (PRR) work lands on a branch and keeps the 100% floor
+
+- **Date:** 2026-10-16
+- **Status:** Accepted
+- **Context:** The SoftwareFactory production-readiness workpack (`anvaya.md`) requires a CI pipeline, a coverage floor, and a secret scan. Anvaya already enforces 100% branch coverage locally (`pyproject.toml` `fail_under = 100`, rule 14) but had no CI to enforce it on a push.
+- **Decision:** Do the PRR work on branch `prr/anvaya` (never straight to `main`). CI (`.github/workflows/ci.yml`) runs the tests *and* re-runs them under `--cov --cov-branch`, so the floor enforced is the repo's existing 100% branch floor — no lower "headroom" value, because Anvaya's own rule is "100% branch before it merges". The secret scan (`.github/workflows/secret-scan.yml`) is scoped to the push/PR commit range only, so a pre-existing historical secret (`M0-B4` DeepSeek key, an owner-gated rotation) does not permanently redden the build.
+- **Consequences:** CI is strict but not a duplicate of local config (the floor lives in `pyproject.toml`, CI just runs it). The full-history secret remains an external gate until the owner rotates it at the provider; the range-scoped scan flags *new* leaks immediately.
