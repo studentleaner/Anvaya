@@ -182,7 +182,14 @@ Status legend: ✅ Done · 🔄 In progress · ⬜ Not started · ⛔ Blocked ·
 | PRR-anvaya-07 | P7 runbook — `docs/OPERATIONS.md` (health, logs, startup bootstrap, backup/restore, runbook per failure) | ◐ | `docs/OPERATIONS.md`; failure table cross-checked against `anvaya_api/abstractai.py` error codes (`gateway_down`/`model_timeout`/`bad_request`), `bootstrap.py` retry ladder (5/20/60/120s), `main.py` routes; created this commit |
 | PRR-anvaya-08 | P8 monitored — portable `HEALTHCHECK` on `/healthz` in `Dockerfile` (see D-04) | ◐ | `Dockerfile` `HEALTHCHECK`; `docker build` → `docker run` → `docker inspect --format '{{.State.Health.Status}}'` → `healthy`; HomeLab compose already healthchecks `/healthz` (PRR-anvaya-08 also notes the Uptime Kuma monitor as an owner item) |
 | PRR-anvaya-09 | P9 API contract — `docs/API_CONTRACT.md` (endpoints, SSE + JSON shapes, errors, versioning; links HomeLab `CONTRACTS.md` + `schemas/`) | ◐ | `docs/API_CONTRACT.md`; shapes cross-checked against `anvaya_api/main.py` (`healthz`/`status`/`chat`/`ask`/`admin_reindex`), `chat.py` (`sse`, `ChatRequest`, event order), `answer.py` (citation retry + fallback), `abstractai.py` (error codes); created this commit |
-| PRR-anvaya-10 | Known issue (no CI) closed by -01/-02; owner-gated items recorded | ⬜ | — |
+| PRR-anvaya-10 | Known issue (no CI) closed by -01/-02; owner-gated items recorded | ◐ | Known issue resolved: CI now exists and runs the tests (`.github/workflows/ci.yml`, rows -01/-02). Owner items listed below. |
+
+### Waiting on owner (PRR-anvaya)
+
+| Item | Why it needs the owner | Suggested action |
+|---|---|---|
+| Uptime Kuma monitor for `anvaya-api` | `anvaya-api` has **no host port** and its docs path is behind the login, so a plain Kuma HTTP monitor cannot reach `/healthz` without embedding credentials (a secret in the monitoring DB). Where to monitor from (internal network vs. login-protected external check) is an infrastructure decision. | Decide the monitor type/endpoint, then add it in HomeLab (`ansible/roles/monitoring/templates/kuma-monitors.sql.j2` or the Uptime Kuma UI). The app side is ready: `HEALTHCHECK`/`/healthz` (row -08). |
+| Rotate the DeepSeek API key (`M0-B4` / `M6-EG1`) | The value is in AbstractAI's git history; only the owner can rotate it at the provider. | Rotate at the DeepSeek dashboard, then purge history. |
 
 ---
 
